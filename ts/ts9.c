@@ -1,0 +1,1019 @@
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <linux/fb.h>
+#include <linux/input.h>
+#include <sys/mman.h>
+
+#define FBDEVFILE "/dev/fb2"
+#define EVENTFILE "/dev/input/event4"
+
+#define BUTTON_XSIZE 40
+#define BUTTON_YSIZE 25
+
+#define COLOR_SIZE 20
+#define PAPER_SIZE 192 
+
+typedef unsigned char ubyte;
+typedef unsigned int dtype;
+
+typedef struct tag_point
+{
+	int x;
+	int y;
+}point;
+
+typedef struct tag_datablock
+{
+	int fd;
+	int fbfd;
+	struct fb_var_screeninfo fbvar;
+	unsigned short* pfbdata;
+}datablock;
+
+typedef struct tag_input
+{
+	int x;
+	int y;
+	int pressure;
+}input;
+
+typedef struct tag_paint
+{
+	point min_pos;
+	point max_pos;
+	unsigned char color;
+	unsigned int map[PAPER_SIZE][6];
+}paint;
+
+void init();
+input readtouch();
+int readcommand(input);
+void setcolor(int);
+void setdrawmode(int);
+void setpenmode(int);
+void drawing(input);
+void dotinmap(unsigned int,int,int);
+void clearpaper();
+void createbg(paint* p);
+void printbg(int,int,int,int);
+void printmap(int,int,int,int);
+
+void printconsole(unsigned int (*)[6]);
+
+unsigned short makepixel(ubyte, ubyte, ubyte);
+
+const unsigned char IMG_line[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xff,0xfd,0xfe,0xff,0xff,0xff,0xfd,0xff,0xff,0xff,0xff,0xfd,0xff,0xff,0xf8,0x7f,0xfd,0xfe,0xe8,0xf3,0x3f,0xfd,0xfe,0xea,0x77,0xbf,0xfd,0xfe,0xe3,0x77,0xbf,0xfd,0xfe,0xf7,0x30,0x3f,0xfd,0xfe,0xf7,0xb7,0xff,0xfd,0xff,0x77,0xb7,0xff,0xfe,0xff,0x77,0xb3,0xdf,0xfe,0x07,0x7f,0xf8,0x3f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_rect[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xbf,0xff,0xff,0xff,0xfe,0x4f,0xff,0xff,0xff,0xfe,0x77,0xff,0xff,0xff,0xfe,0xf3,0xff,0xff,0xbf,0xfe,0xfb,0xff,0xff,0xbf,0xfe,0xf3,0x8f,0xe3,0xbf,0xfe,0xf7,0x33,0xdb,0xbf,0xfe,0xef,0x7b,0xbe,0x07,0xfe,0x9e,0x73,0xbf,0xbf,0xfe,0x1e,0x07,0xbf,0xbf,0xfe,0xe7,0x7f,0xbf,0xbf,0xfe,0xf3,0x3d,0x9f,0xbf,0xfe,0xf9,0x83,0xc1,0xc1,0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff};
+const unsigned char IMG_oval[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfc,0x1f,0xff,0xfe,0xff,0xf8,0x1f,0xff,0xfe,0xff,0xf2,0xef,0xff,0xfe,0xff,0xf7,0xe7,0xff,0xff,0x7f,0xef,0xf5,0xef,0xff,0x7f,0xef,0xf5,0xe8,0x3f,0x7f,0xef,0xf6,0xdb,0x9f,0x7f,0xf7,0xf6,0xdb,0x9f,0x7f,0xf7,0xf6,0x5b,0x8f,0x7f,0xf7,0xef,0x1b,0xa7,0x7f,0xfb,0xcf,0x3c,0x77,0x7f,0xfc,0x1f,0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_freedraw[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xc0,0x7f,0xff,0xff,0xff,0xcf,0xff,0xff,0xff,0xff,0xef,0xdf,0xff,0xff,0xff,0xe0,0xde,0x30,0x7f,0xff,0xef,0xc2,0x97,0x7f,0xff,0xef,0xde,0x30,0x7f,0xff,0xef,0xde,0xf3,0xff,0xff,0xff,0xde,0x19,0x7f,0xff,0xff,0xff,0x3c,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xef,0xff,0xff,0xff,0xff,0xef,0xff,0xff,0xff,0xff,0xed,0xcf,0xff,0xff,0xff,0xec,0x87,0xf7,0xef,0xff,0xee,0x3c,0x76,0xef,0xff,0x0e,0x7d,0x32,0x5f,0xff,0x4f,0x7d,0x1a,0x5f,0xff,0x6f,0x7c,0x59,0x1f,0xff,0x07,0x7f,0xcd,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_select[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe,0x7f,0xcf,0xff,0xff,0xf9,0x3f,0xdf,0xff,0xff,0xfb,0xff,0xcf,0xff,0xff,0xf7,0xff,0xef,0xff,0x9f,0xf7,0xff,0xef,0xff,0xdf,0xf7,0xf9,0xef,0xff,0xdf,0xfb,0xf0,0xec,0x39,0x03,0xfc,0xf6,0x69,0xb0,0xdf,0xfe,0x77,0x69,0x27,0xdf,0xff,0x30,0xe8,0x6f,0xdf,0xff,0xb7,0xeb,0xe7,0xdf,0xff,0x33,0x69,0xb0,0xdf,0xf8,0x78,0x6c,0x39,0xc3,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_erase[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xe0,0x3f,0xff,0xff,0xff,0xef,0xff,0xff,0xff,0xff,0xcf,0xff,0xff,0xff,0xff,0xdf,0xff,0xff,0xff,0xff,0xdf,0xff,0xff,0xff,0xff,0xdf,0xef,0xff,0xff,0xff,0xc0,0xe6,0x3f,0xf3,0x87,0xef,0xf4,0xa1,0xe5,0x73,0xef,0xf1,0xed,0xef,0x7b,0xef,0xf3,0xec,0xe7,0x33,0xef,0xf3,0xec,0xf9,0x07,0xe7,0xfb,0xed,0x7d,0x7f,0xf0,0x3b,0xf1,0x2d,0x3d,0xff,0xff,0xff,0xf3,0x93,0xff,0xff,0xff,0xff,0xc7,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_clear[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfb,0xff,0xff,0xff,0xfc,0x7b,0xff,0xff,0xff,0xf3,0x3b,0xff,0xff,0xff,0xf7,0xfb,0xff,0xff,0xff,0xef,0xfb,0xff,0xff,0xff,0xcf,0xfb,0xff,0xfe,0xff,0xdf,0xfb,0xc3,0x0e,0x67,0xdf,0xf9,0x99,0x6f,0x43,0xdf,0xfd,0x33,0x67,0x1f,0xcf,0xfd,0x07,0x73,0x3f,0xef,0xfd,0x3f,0x73,0x7f,0xf7,0xfd,0xbf,0x31,0x7f,0xf0,0x7d,0x9f,0x85,0x7f,0xff,0xfd,0xe1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_pen[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfc,0x1f,0xff,0xff,0xff,0xfc,0xc7,0xff,0xff,0xff,0xfe,0xfb,0xff,0xff,0xff,0xfe,0xfb,0xff,0xff,0xff,0xfe,0xfb,0xff,0xff,0xff,0xfe,0xfb,0xc1,0xff,0xff,0xfe,0xfb,0x9e,0xd8,0x7f,0xfe,0xf7,0x7e,0xd3,0x3f,0xfe,0x0f,0x7c,0xd7,0xbf,0xfe,0xff,0x79,0xd7,0xbf,0xfe,0xff,0x07,0xc7,0xbf,0xfe,0xff,0x7f,0xef,0xdf,0xfe,0xff,0x7f,0xef,0xdf,0xfe,0xff,0x3f,0xef,0xdf,0xfe,0xff,0x91,0xef,0xff,0xfe,0xff,0xe7,0xff,0xff,0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+const unsigned char IMG_fill[] = {0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfc,0x07,0x7d,0xef,0xff,0xfc,0xff,0x7d,0xef,0xff,0xfe,0xff,0xfd,0xef,0xff,0xfe,0xff,0xfd,0xef,0xff,0xfe,0xff,0xbd,0xef,0xff,0xfe,0xff,0xbd,0xef,0xff,0xfe,0x07,0xbd,0xef,0xff,0xfe,0xff,0xbd,0xef,0xff,0xfe,0xff,0xbd,0xef,0xff,0xfe,0xff,0xbd,0xef,0xff,0xfe,0xff,0xbd,0xe7,0xff,0xfe,0xff,0xbd,0xf7,0xff,0xfe,0xff,0xbe,0xf7,0xff,0xfe,0xff,0xbe,0xfb,0xff,0xff,0xff,0xbf,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff}; 
+
+const point line_pos = {10,20};
+const point rect_pos = {10,50};
+const point oval_pos = {10,80};
+const point freedraw_pos = {10,110};
+const point select_pos = {10,140};
+const point erase_pos = {10,170};
+const point clear_pos = {10,200};
+const point pen_pos = {270,160};
+const point fill_pos = {270,200};
+const point white_pos = {265,20};
+const point orange_pos = {295,20};
+const point red_pos = {265,50};
+const point green_pos = {295,50};
+const point yellow_pos = {265,80};
+const point navy_pos = {295,80};
+const point blue_pos = {265,110};
+const point black_pos = {295,110};
+const point paper_pos = {64,24};
+
+double K;
+double A;
+double B;
+double C;
+double D;
+double E;
+double F;
+
+datablock db;
+int prev_pressure = 0;
+
+unsigned short colors[8];
+paint* buffer[1000];
+int buffer_count;
+
+unsigned int bgdot[PAPER_SIZE][6];
+unsigned char bgcolor[PAPER_SIZE][PAPER_SIZE];
+
+int drawmode;
+int penmode;
+char current_color; 
+
+paint* newpaint;
+
+int main()
+{
+	init();
+	input ip;
+	
+	int i, j, k;
+	struct input_event ie;
+
+	int offset, px;
+	int cmd;
+
+	while(1)
+	{
+
+		ip = readtouch();
+		cmd = readcommand(ip);
+
+		if(cmd>=0 && cmd<=5)			// set drawmode
+			setdrawmode(cmd);
+		else if(cmd == 6)			// clear
+		{
+			/************************/
+		//	createbg(NULL);
+			/************************/
+							
+			clearpaper();
+			
+			/************************/
+			
+	//		printconsole(bgdot);
+			/*	
+			for(i=0;i<192;i++)
+			{
+				offset = (i+paper_pos.y)*db.fbvar.xres;
+				for(j=0; j<6; j++)
+				{
+					unsigned int bits = bgdot[i][j];
+					unsigned int bit = 0x80000000;
+
+					if(bits == 0)
+						continue;
+
+					for(k=0; k<32; k++)
+					{
+						if((bits&bit)==bit)
+							*(db.pfbdata+offset+j*32+k+paper_pos.x) = colors[bgcolor[i][j*32+k]];
+						bit = bit>>1;
+					}
+				}
+			}
+			*/
+			/***************************************************/
+		}
+		else if(cmd == 10 || cmd == 11)		// set pen or fill mode
+			setpenmode(cmd);
+		else if(cmd>=20 && cmd<=27)		// set color
+			setcolor(cmd);
+		else if(cmd==100)			// drawing
+			drawing(ip);		
+		
+		prev_pressure = ip.pressure;
+	}
+
+	munmap(db.pfbdata, db.fbvar.xres*db.fbvar.yres*(16/8));
+	close(db.fd);
+	close(db.fbfd);
+	return 0;
+}
+
+void init()
+{	
+	int fd, fbfd;
+	struct input_event ie;
+	int xpos1, xpos2, ypos1, ypos2;
+	int ret, t;
+	struct fb_var_screeninfo fbvar;
+	int bg, px;
+
+	int offset, i, j, k;
+	unsigned short* pfbdata;
+
+	int x, y, pressure = 0, prev_pressure = 0;	
+	int lcd_x[3] = {100, 300, 250};
+	int lcd_y[3] = {100, 200, 50};
+	int ts_x[3] = {0};
+	int ts_y[3] = {0};
+
+	const unsigned char* func[9] = {IMG_line, IMG_rect, IMG_oval, IMG_freedraw, IMG_select, IMG_erase, IMG_clear, IMG_pen, IMG_fill};
+
+	fbfd = open(FBDEVFILE, O_RDWR);
+	if(fbfd < 0)
+	{
+		perror("fbdev open");
+		exit(1);
+	}
+
+	ret = ioctl(fbfd, FBIOGET_VSCREENINFO, &fbvar);
+	if(ret < 0)
+	{
+		perror("fbdev ioctl");
+		exit(1);
+	}
+
+	if(fbvar.bits_per_pixel != 16)
+	{
+		fprintf(stderr, "bpp is not 16\n");
+		exit(1);
+	}
+
+	pfbdata = (unsigned short*)mmap(0, fbvar.xres*fbvar.yres*(16/8), PROT_READ|PROT_WRITE, MAP_SHARED, fbfd, 0);
+        if((unsigned)pfbdata == (unsigned)(-1))
+        {
+                perror("fbdev mmap");
+                exit(1);
+        }
+	
+	fd = open(EVENTFILE, O_RDONLY);
+	if(fd < 0)
+		exit(1);
+	
+	bg = makepixel(34, 177, 76);
+	for(i=0; i<fbvar.yres; i++)
+        {
+                for(j=0; j<fbvar.xres; j++)
+                {
+                        offset = j + i*fbvar.xres;
+                        *(pfbdata+offset) = bg;
+                }
+        }
+
+
+	px = makepixel(0,0,0);
+	
+	for(j=lcd_y[0]-3; j<lcd_y[0]+3; j++)
+	{
+		for(k=lcd_x[0]-3; k<lcd_x[0]+3; k++)
+		{
+			 offset = j*fbvar.xres + k;
+			 *(pfbdata+offset) = px;
+		}
+	}
+
+	i = 0;
+	while(1)
+	{
+                prev_pressure = pressure;
+
+		read(fd, &ie, sizeof(struct input_event));
+		if(ie.type==3)
+		{
+			if(ie.code==0)
+				x = ie.value;
+			else if(ie.code==1)
+				y = ie.value;
+			else if(ie.code==24)
+				pressure = ie.value;
+		}
+	
+
+                if(prev_pressure>0 && pressure==0)
+                {
+			for(j=lcd_y[i]-3; j<lcd_y[i]+3; j++)
+			{
+				for(k=lcd_x[i]-3; k<lcd_x[i]+3; k++)
+				{
+				 	offset = j*fbvar.xres + k;
+					*(pfbdata+offset) = bg;
+				}
+			}
+
+                        ts_x[i] = x;
+                        ts_y[i] = y;
+                        i++;
+
+                        if(i==3)
+                                break;
+          
+			for(j=lcd_y[i]-3; j<lcd_y[i]+3; j++)
+			{
+				for(k=lcd_x[i]-3; k<lcd_x[i]+3; k++)
+				{
+				 	offset = j*fbvar.xres + k;
+					*(pfbdata+offset) = px;
+				}
+			}
+		}
+		printf("x = %d, y = %d, pressure = %d, prev_pressure = %d, i = %d\n", x, y, pressure, prev_pressure, i);
+        }
+
+	K = (ts_x[0] - ts_x[2])*(ts_y[1] - ts_y[2]) - (ts_x[1] - ts_x[2])*(ts_y[0] - ts_y[2]);
+        A = ((lcd_x[0] - lcd_x[2])*(ts_y[1] - ts_y[2]) - (lcd_x[1] - lcd_x[2])*(ts_y[0] - ts_y[2]))/K;
+        B = ((ts_x[0] - ts_x[2])*(lcd_x[1] - lcd_x[2]) - (lcd_x[0] - lcd_x[2])*(ts_x[1] - ts_x[2]))/K;
+        C = (ts_y[0]*(ts_x[2]*lcd_x[1] - ts_x[1]*lcd_x[2]) + ts_y[1]*(ts_x[0]*lcd_x[2] - ts_x[2]*lcd_x[0]) + ts_y[2]*(ts_x[1]*lcd_x[0] - ts_x[0]*lcd_x[1]))/K;
+        D = ((lcd_y[0] - lcd_y[2])*(ts_y[1] - ts_y[2]) - (lcd_y[1] - lcd_y[2])*(ts_y[0] - ts_y[2]))/K;
+        E = ((ts_x[0] - ts_x[2])*(lcd_y[1] - lcd_y[2]) - (lcd_y[0] - lcd_y[2])*(ts_x[1] - ts_x[2]))/K;
+        F = (ts_y[0]*(ts_x[2]*lcd_y[1] - ts_x[1]*lcd_y[2]) + ts_y[1]*(ts_x[0]*lcd_y[2] - ts_x[2]*lcd_y[0]) + ts_y[2]*(ts_x[1]*lcd_y[0] - ts_x[0]*lcd_y[1]))/K;
+
+	printf("K = %lf, A = %lf, B = %lf, C = %lf, D = %lf, E = %lf, F = %lf\n", K, A, B, C, D, E, F);
+        printf("%lf, %lf\n", A*1300+B*2400+C, D*1300+E*2400+F);
+
+	colors[0] = makepixel(255,255,255);
+	colors[1] = makepixel(255,127,39);
+	colors[2] = makepixel(237,28,36);
+	colors[3] = makepixel(181,230,29);
+	colors[4] = makepixel(255,242,0);
+	colors[5] = makepixel(63,72,204);
+	colors[6] = makepixel(0,162,232);
+	colors[7] = makepixel(0,0,0);
+
+	x = 10;
+	y = 20;
+
+	px = makepixel(0,0,0);
+	bg = makepixel(255,255,255);
+	
+	for(k=0; k<7; k++)
+	{
+		for(i=0; i<BUTTON_YSIZE; i++)
+		{
+			for(j=0; j<5; j++)
+			{
+				unsigned char bits = func[k][j+i*5];
+				unsigned char bit = 0x80;
+				for(t=0; t<8; t++)
+				{
+					offset = (x+t+j*8) + (y+i)*fbvar.xres;
+					if((bits&bit)==bit)
+						*(pfbdata+offset) = bg;
+					else
+						*(pfbdata+offset) = px;
+					bit = bit>>1;
+				}
+			}
+		}
+		y = y + BUTTON_YSIZE + 5;
+	}
+
+	x = 270;
+	y = 160;
+	
+	for(k=7; k<9; k++)
+	{
+		for(i=0; i<BUTTON_YSIZE; i++)
+		{
+			for(j=0; j<5; j++)
+			{
+				unsigned char bits = func[k][j+i*5];
+				unsigned char bit = 0x80;
+				for(t=0; t<8; t++)
+				{
+					offset = (x+t+j*8) + (y+i)*fbvar.xres;
+					if((bits&bit)==bit)
+						*(pfbdata+offset) = bg;
+					else
+						*(pfbdata+offset) = px;
+					bit = bit>>1;
+				}
+			}
+		}
+		y = y + BUTTON_YSIZE + 15;
+	}
+
+	x = paper_pos.x;
+	y = paper_pos.y;
+
+	px = bg;
+
+	for(i=y; i<y+PAPER_SIZE; i++)
+	{
+		offset = i*fbvar.xres;
+		for(j=x; j<x+PAPER_SIZE; j++)
+			*(pfbdata+offset+j) = px;
+	}
+	
+	x = 265;
+	y = 20;
+	t = 0;
+	
+	for(k=0; k<4; k++)
+	{
+		for(i=y; i<y+COLOR_SIZE; i++)
+		{
+			offset = i*fbvar.xres;
+			for(j=x; j<x+COLOR_SIZE; j++)
+				*(pfbdata+offset+j) = colors[t];
+		}
+		t++;
+		for(i=y; i<y+COLOR_SIZE; i++)
+		{
+			offset = i*fbvar.xres;
+			for(j=x+30; j<x+30+COLOR_SIZE; j++)
+				*(pfbdata+offset+j) = colors[t];
+		}
+		t++;
+		y = y + 30;
+	}
+
+	memset(buffer, 0, sizeof(buffer));
+	buffer_count = 0;
+
+	drawmode = 3;
+	penmode = 1;
+	current_color = 7;
+	newpaint = NULL;
+
+	db.fd = fd;
+	db.fbfd = fbfd;
+	db.fbvar = fbvar;
+	db.pfbdata = pfbdata;
+}
+
+input readtouch()
+{
+	static int x = 0, y = 0;
+	static int pressure = 0;
+	struct input_event ie;
+	int i;
+		
+	input new;
+	
+	read(db.fd, &ie, sizeof(struct input_event));
+	if(ie.type==3)
+	{
+		if(ie.code==0)
+			x = ie.value;
+		else if(ie.code==1)
+			y = ie.value;
+		else if(ie.code==24)
+			pressure = ie.value;
+	}
+	
+	new.x = (int)(A*x+B*y+C);
+	new.y = (int)(D*x+E*y+F);
+	new.pressure = pressure;
+	
+	return new;
+}
+
+int readcommand(input ip)
+{
+	int x = ip.x;
+	int y = ip.y;
+	int pressure = ip.pressure;
+		
+	int cmd = -1;
+	
+	if(prev_pressure>0 && pressure==0)
+	{
+		if(x>=line_pos.x && x<line_pos.x+BUTTON_XSIZE)
+		{
+			if(y>=line_pos.y && y<line_pos.y+BUTTON_YSIZE)
+				cmd = 0;
+			else if(y>=rect_pos.y && y<rect_pos.y+BUTTON_YSIZE)
+				cmd = 1;
+			else if(y>=oval_pos.y && y<oval_pos.y+BUTTON_YSIZE)
+				cmd = 2;
+			else if(y>=freedraw_pos.y && y<freedraw_pos.y+BUTTON_YSIZE)
+				cmd = 3;
+			else if(y>=select_pos.y && y<select_pos.y+BUTTON_YSIZE)
+				cmd = 4;
+			else if(y>=erase_pos.y && y<erase_pos.y+BUTTON_YSIZE)
+				cmd = 5;
+			else if(y>=clear_pos.y && y<clear_pos.y+BUTTON_YSIZE)
+				cmd = 6;
+			else
+				cmd = -1;
+		}
+		else if(x>=white_pos.x && x<orange_pos.x+COLOR_SIZE)
+		{
+			if(y>=pen_pos.y && y<pen_pos.y+BUTTON_YSIZE)
+				cmd = 10;	
+			else if(y>=fill_pos.y && y<fill_pos.y+BUTTON_YSIZE)
+				cmd = 11;
+			else
+			{
+				if(y>=white_pos.y && y<white_pos.y+COLOR_SIZE)
+				{
+					if(x<white_pos.x+COLOR_SIZE)
+						cmd = 20;
+					else if(x>=orange_pos.x)
+						cmd = 21;
+					else
+						cmd = -1;
+				}
+				else if(y>=red_pos.y && y<red_pos.y+COLOR_SIZE)
+				{
+					if(x<white_pos.x+COLOR_SIZE)
+						cmd = 22;
+					else if(x>=orange_pos.x)
+						cmd = 23;
+					else
+						cmd = -1;
+				}
+				else if(y>=yellow_pos.y && y<yellow_pos.y+COLOR_SIZE)
+				{
+					if(x<white_pos.x+COLOR_SIZE)
+						cmd = 24;
+					else if(x>=orange_pos.x)
+						cmd = 25;
+					else
+						cmd = -1;
+				}
+				else if(y>=blue_pos.y && y<blue_pos.y+COLOR_SIZE)
+				{
+					if(x<white_pos.x+COLOR_SIZE)
+						cmd = 26;
+					else if(x>=orange_pos.x)
+						cmd = 27;
+					else
+						cmd = -1;
+				}
+				else
+					cmd = -1;
+			}
+		}
+		else if(x>=paper_pos.x+1 && x<paper_pos.x+PAPER_SIZE-1) 
+		{
+			if(y>=paper_pos.y+1 && y<paper_pos.y+PAPER_SIZE-1)
+				cmd = 100;
+			else
+				cmd = -1;
+		}
+		else
+			cmd = -1;
+	}
+	else
+	{
+		if(x>=paper_pos.x+1 && x<paper_pos.x+PAPER_SIZE-1 && y>=paper_pos.y+1 && y<paper_pos.y+PAPER_SIZE-1)
+			cmd = 100;
+		else
+		{
+			if(newpaint!=NULL)
+			{
+				buffer[buffer_count] = newpaint;
+				buffer_count++;
+				newpaint = NULL;
+			}
+			cmd = -1;
+		}
+	}
+	
+	return cmd;	
+}
+
+void drawing(input ip)
+{
+	int x = ip.x;
+	int y = ip.y;
+	int pressure = ip.pressure;
+
+	static int xpos1, ypos1;
+	static int xpos2 = -100, ypos2 = -100;
+
+	int i, j, k, offset;
+	
+	if(drawmode>=0 && drawmode <=3)
+	{	
+		if(prev_pressure == 0 && pressure > 0)			// on
+		{
+			newpaint = (paint*)malloc(sizeof(paint));
+				
+			newpaint->color = current_color;
+			newpaint->min_pos.x = 500;
+			newpaint->min_pos.y = 500;
+			newpaint->max_pos.x = -100;
+			newpaint->max_pos.y = -100;
+			memset(newpaint->map, 0, sizeof(newpaint->map));
+	
+			if(drawmode!=3)
+			{
+				xpos1 = x - paper_pos.x;
+				ypos1 = y - paper_pos.y;
+				createbg(NULL);
+			}
+		}
+		else if(prev_pressure > 0 && pressure == 0 && newpaint != NULL)		// off
+		{
+			buffer[buffer_count] = newpaint;
+			buffer_count++;
+
+			if(drawmode != 3)
+			{
+				if(xpos1>xpos2)
+				{
+					int temp = xpos1;
+					xpos1 = xpos2;
+					xpos2 = temp;
+				}
+
+				if(ypos1>ypos2)
+				{
+					int temp = ypos1;
+					ypos1 = ypos2;
+					ypos2 = temp;
+				}
+
+				newpaint->min_pos.x = xpos1;
+				newpaint->min_pos.y = ypos1;
+
+				newpaint->max_pos.x = xpos2;
+				newpaint->max_pos.y = ypos2;
+
+				xpos2 = -100;
+				ypos2 = -100;
+			}
+			
+			/****************************************************/
+			printf("buffer_count = %d\n", buffer_count);			
+			printf("(%d, %d)\n", newpaint->min_pos.x, newpaint->min_pos.y);
+			printf("(%d, %d)\n\n", newpaint->max_pos.x, newpaint->max_pos.y);
+			/****************************************************/
+
+			newpaint = NULL;
+		}
+		else if(prev_pressure > 0 & pressure > 0 && newpaint != NULL)		// touching
+		{
+			if(drawmode == 0)						// line
+			{
+				x = x - paper_pos.x;
+				y = y - paper_pos.y;
+	
+				if(x>xpos2+2 || x<xpos2-2 || y>ypos2+2 || y<ypos2-2)
+				{
+					double a, b;
+
+					xpos2 = x;
+					ypos2 = y;
+					
+					if(xpos2 != xpos1 && xpos2 > 0 && ypos2 > 0)
+					{
+						static int xhigh, xlow, ylow, yhigh;
+						int result, q, r;
+						a = (ypos2 - ypos1)/(double)(xpos2 - xpos1);
+						b = ypos1 - a*xpos1;
+						
+						if(xhigh != 0)
+							printbg(xlow, ylow, xhigh, yhigh);
+						
+						memset(newpaint->map, 0, sizeof(newpaint->map));
+						
+						if(xpos1<xpos2)
+						{
+							xlow = xpos1;
+							xhigh = xpos2;
+						}
+						else
+						{
+							xlow = xpos2;
+							xhigh = xpos1;
+						}	
+
+						for(i=xlow; i<=xhigh; i++)
+						{
+							unsigned int bit = 0x80000000;
+							q = (int)(i/32);
+							r = i%32;
+							bit = bit>>r;
+							result =(int)(i*a+b);
+									
+							dotinmap(bit, q, result);
+
+						}
+
+						if(ypos1<ypos2)
+						{
+							ylow = ypos1;
+							yhigh = ypos2;
+						}
+						else
+						{
+							ylow = ypos2;
+							yhigh = ypos1;
+						}
+
+						for(i=ylow; i<=yhigh; i++)
+						{
+							unsigned int bit = 0x80000000;
+							result = (int)((i-b)/a);
+							q = (int)(result/32);
+							r = result%32;
+
+							bit = bit>>r;
+
+							dotinmap(bit, q, i);
+						}
+												
+						printmap(xlow, ylow, xhigh, yhigh);	
+
+						newpaint->min_pos.x = xlow-1;
+						newpaint->min_pos.y = ylow-1;
+						newpaint->max_pos.x = xhigh+1;
+						newpaint->max_pos.y = yhigh+1;
+					}
+				}
+
+			}
+			else if(drawmode == 1)					// rect
+			{
+				x = x - paper_pos.x;
+				y = y - paper_pos.y;
+	
+				if(x>xpos2+2 || x<xpos2-2 || y>ypos2+2 || y<ypos2-2)
+				{
+					double a, b;
+
+					xpos2 = x;
+					ypos2 = y;
+					
+					if(xpos2 != xpos1 && xpos2 > 0 && ypos2 > 0)
+					{
+						static int xhigh, xlow, ylow, yhigh;
+
+					
+
+						if(xhigh != 0)
+							printbg(xlow, ylow, xhigh, yhigh);
+						
+						memset(newpaint->map, 0, sizeof(newpaint->map));
+						
+						if(xpos1<xpos2)
+						{
+							xlow = xpos1;
+							xhigh = xpos2;
+						}
+						else
+						{
+							xlow = xpos2;
+							xhigh = xpos1;
+						}	
+
+						if(ypos1<ypos2)
+						{
+							ylow = ypos1;
+							yhigh = ypos2;
+						}
+						else
+						{
+							ylow = ypos2;
+							yhigh = ypos1;
+						}
+
+						if(penmode == 0)
+						{
+							for(i=xlow; i<=xhigh; i=i+3)
+							{
+								int q, r;
+								unsigned int bit = 0x80000000;
+							}
+						}
+						else if(penmode == 1)
+						{
+							for(i=ylow; i<=yhigh; i=i+3)
+							{
+								for(j=xlow; j<=xhigh; j=j+3)
+								{
+									int q, r;
+									unsigned int bit = 0x80000000;
+									q = (int)(j/32);
+									r = j%32;
+									
+									bit = bit >> r;
+
+									dotinmap(bit, q, i);
+								}
+							}
+						}					
+
+
+
+						printmap(xlow, ylow, xhigh, yhigh);	
+
+						newpaint->min_pos.x = xlow-1;
+						newpaint->min_pos.y = ylow-1;
+						newpaint->max_pos.x = xhigh+1;
+						newpaint->max_pos.y = yhigh+1;
+					}
+				}
+			}
+			else if(drawmode == 2);
+			else if(drawmode == 3)					// free draw
+			{
+				int q = (int)((x - paper_pos.x)/32);
+				int r = (x - paper_pos.x)%32;	
+
+				unsigned int bit = 0x80000000>>r;
+
+				if(q*32+r-1<newpaint->min_pos.x)
+					newpaint->min_pos.x = q*32+r-1;
+
+				if(y-1<newpaint->min_pos.y)
+					newpaint->min_pos.y = y-paper_pos.y-1;
+
+				if(q*32+r+1>newpaint->max_pos.x)
+					newpaint->max_pos.x = q*32+r+1;
+
+				if(y+1>newpaint->max_pos.y)
+					newpaint->max_pos.y = y-paper_pos.y+1;
+
+		
+				dotinmap(bit, q, y-paper_pos.y);				
+					
+				for(i=-1; i<2; i++)
+				{
+					offset = (y+i)*db.fbvar.xres;
+					for(j=-1; j<2; j++)
+						*(db.pfbdata+offset+x+j) = colors[newpaint->color];
+				}				
+			}	
+		}
+	}
+	else if(drawmode == 4);
+	else if(drawmode == 5);
+}
+
+void dotinmap(unsigned int bit, int q, int y) // q is xpos of buffer array (0 ~ 5)
+{
+	if(bit == 0x80000000)
+	{
+		newpaint->map[y-1][q-1] |= 0x00000001;
+		newpaint->map[y][q-1] |= 0x00000001;
+		newpaint->map[y+1][q-1] |= 0x00000001;	
+	}
+	else if(bit == 0x00000001)
+	{
+		newpaint->map[y-1][q+1] |= 0x80000000;
+		newpaint->map[y][q+1] |= 0x80000000;
+		newpaint->map[y+1][q+1] |= 0x80000000;	
+	}
+
+	newpaint->map[y-1][q] = newpaint->map[y-1][q] | bit | (bit<<1) | (bit>>1);
+	newpaint->map[y][q] = newpaint->map[y][q] | bit | (bit<<1) | (bit>>1);
+	newpaint->map[y+1][q] = newpaint->map[y+1][q] | bit | (bit<<1) | (bit>>1);
+}
+
+void clearpaper()
+{
+	int i,j,offset;
+
+	/**********************/
+	printf("buffer_count = %d\n", buffer_count);
+	/**********************/
+	for(i=0; i<buffer_count; i++)
+	{
+		/*********************************/
+		printf("%d : (%d, %d) ~ (%d, %d)\n", buffer[i], buffer[i]->min_pos.x, buffer[i]->min_pos.y, buffer[i]->max_pos.x, buffer[i]->max_pos.y);
+		/*********************************/
+		free(buffer[i]);
+	}
+	/**********************************/
+	printf("\n");
+	/**********************************/
+	buffer_count = 0;
+
+	for(i=0; i<PAPER_SIZE; i++)
+	{
+		offset = (i+paper_pos.y)*db.fbvar.xres;
+		for(j=0; j<PAPER_SIZE; j++)
+			*(db.pfbdata+offset+j+paper_pos.x) = colors[0];
+	}
+}
+
+void createbg(paint* p)
+{
+	int i,j,k,t;
+	
+	memset(bgdot, 0, sizeof(bgdot));
+	memset(bgcolor, 0, sizeof(bgcolor));
+
+	for(i=0; i<buffer_count; i++)
+	{
+		if(buffer[i] != p)
+		{
+			for(j=0; j<PAPER_SIZE; j++)
+			{
+				for(k=0; k<6; k++)
+				{
+					unsigned int bits = buffer[i]->map[j][k];
+					unsigned char color = buffer[i]->color;
+					if(bits != 0)
+					{
+						unsigned int bit = 0x80000000;
+						bgdot[j][k] |= bits;
+
+						for(t=0; t<32; t++)
+						{
+							if((bits&bit)==bit)
+								bgcolor[j][k*32+t] = color;
+							bit = bit>>1;
+						}
+					}
+				}	
+			}		
+		}
+	}
+}
+
+
+void printbg(int xpos1, int ypos1, int xpos2, int ypos2)
+{
+	int i,j, offset;
+	int q, r;
+
+	for(i=ypos1-1; i<=ypos2+1; i++)
+	{
+		offset = (i+paper_pos.y)*db.fbvar.xres;		
+		for(j=xpos1-1; j<=xpos2+1; j++)
+		{
+			unsigned int bits, bit = 0x80000000;
+			q = (int)(j/32);
+			r = j%32;
+			
+			bits = bgdot[i][q];
+			bit = bit >> r;
+
+			*(db.pfbdata+j+offset+paper_pos.x) = colors[bgcolor[i][j]]; 
+		}
+	}	
+}
+
+void printmap(int xpos1, int ypos1, int xpos2, int ypos2)
+{
+	int i,j, offset;
+	int q, r;
+	unsigned char color = newpaint->color;
+
+	for(i=ypos1-1; i<=ypos2+1; i++)
+	{
+		offset = (i+paper_pos.y)*db.fbvar.xres;		
+		for(j=xpos1-1; j<=xpos2+1; j++)
+		{
+			unsigned int bits, bit = 0x80000000;
+			q = (int)(j/32);
+			r = j%32;
+			
+			bits = newpaint->map[i][q];
+			bit = bit >> r;
+
+			if(bits != 0 && (bits&bit)==bit && bgcolor[i][j] != color)
+				*(db.pfbdata+j+offset+paper_pos.x) = colors[color];	
+		}
+	}	
+}
+
+void printconsole(unsigned int (*map)[6])
+{
+	int i,j,k;
+
+	for(i=0; i<192; i++)
+	{
+		printf("%d	", i);
+		
+		for(j=0; j<6; j++)
+		{
+			unsigned int bits = map[i][j];
+			unsigned int bit = 0x80000000;
+
+			if(bits == 0)
+			{	
+				printf("                                ");
+				continue;
+			}
+
+			for(k=0; k<32; k++)
+			{
+				if((bits&bit)==bit)
+					printf("0");
+				else
+					printf(" ");
+				bit = bit>>1;
+			}
+		}
+		printf("\n");
+	}
+	printf("\n\n");
+}
+
+void setcolor(int cmd)
+{
+	current_color = cmd-20;
+}
+
+void setdrawmode(int cmd)
+{
+	drawmode = cmd;
+}
+
+void setpenmode(int cmd)
+{
+	penmode = cmd - 10;
+}
+
+unsigned short makepixel(ubyte r, ubyte g, ubyte b)
+{
+        return (((r>>3)<<11) | ((g>>2)<<5) | (b>>3));
+}
