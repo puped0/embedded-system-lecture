@@ -1,6 +1,7 @@
 # embedded-system-lecture
 
 강의명 : 임베디드 시스템
+
 ordroid-c 보드 기반 linux application 개발 과제
 
 1.LED
