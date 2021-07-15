@@ -4,7 +4,7 @@
 ordroid-c 보드 기반 linux application 개발 과제
 
 1.LED
- -빵판에 LED로 7-segment 회로 구성
+ - 빵판에 LED로 7-segment 회로 구성
  - 0 ~ F 까지의 숫자 출력, 원하는 LED만 출력
 
 2.CLCD
