@@ -19,11 +19,11 @@ ordroid-c 보드 기반 linux application 개발 과제
 4. TS(Touch Screen)
  - 터치 스크린을 이용한 그림판 구현이 목표
  - 기능
-  * Line - 두 점을 잇는 선을 그림
-  * Rectangle - 두 점을 맞꼭지점으로 하는 네모를 그림
-  * Oval - 두 점을 맞꼭지점으로 하는 직사각형에 내접하는 타원을 그림
-  * Free draw - 펜으로 자유롭게 도형을 그림
-  * Select - 그려진 도형을 선택하고 드래그해서 도형의 위치를 옮김
-  * Erase - Free draw와 같은 원리로 그림을 지움 / Select와 연계하여 하나의 도형을 지움
-  * Clear - 도형 전체 지우기
+   * Line - 두 점을 잇는 선을 그림
+   * Rectangle - 두 점을 맞꼭지점으로 하는 네모를 그림
+   * Oval - 두 점을 맞꼭지점으로 하는 직사각형에 내접하는 타원을 그림
+   * Free draw - 펜으로 자유롭게 도형을 그림
+   * Select - 그려진 도형을 선택하고 드래그해서 도형의 위치를 옮김
+   * Erase - Free draw와 같은 원리로 그림을 지움 / Select와 연계하여 하나의 도형을 지움
+   * Clear - 도형 전체 지우기
   
